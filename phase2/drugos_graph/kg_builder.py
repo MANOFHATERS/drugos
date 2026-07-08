@@ -266,7 +266,16 @@ ID_PATTERNS: dict[str, str] = {
     # ``CHEMBL_TGT_\d+`` prefix as a valid Protein ID (it is a stable
     # ChEMBL target identifier; entity_resolver can later upgrade it to
     # a UniProt AC via id_crosswalk when one becomes available).
-    "Protein": r"^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9][A-Z0-9]{3}[0-9])([A-Z0-9]{3}[0-9])?(-\d+)?$|^CHEMBL_TGT_\d+$",
+    #
+    # v50 ROOT FIX (Gap #1 — STRING PPI 100% loss): STRING database uses
+    # Ensembl protein IDs (ENSPxxxxxxxxxxxx) as native identifiers. The
+    # bridge stages STRING PPI edges with ENSP IDs in uniprot_ac_a/b columns
+    # (documented at scripts/realdata/process_real_data.py:294). The old
+    # regex rejected all ENSP IDs, causing 47,190 STRING PPI edges to be
+    # dead-lettered → 0 Protein-interacts_with-Protein edges loaded. New
+    # pattern accepts ENSP IDs (Ensembl protein accession format:
+    # ENSP + 10 digits, e.g. ENSP00000354590).
+    "Protein": r"^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9][A-Z0-9]{3}[0-9])([A-Z0-9]{3}[0-9])?(-\d+)?$|^CHEMBL_TGT_\d+$|^ENSP\d{10}$",
     # Gene: numeric NCBI gene ID (e.g. 2261 for FGFR3) OR a SYM:-prefixed
     # gene symbol (e.g. SYM:FGFR3) used as a placeholder until the
     # entity_resolver canonicalizes it to a numeric ID via id_crosswalk.
