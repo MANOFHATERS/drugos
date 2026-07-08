@@ -1,0 +1,95 @@
+# Unified Autonomous Drug Repurposing Platform — Combined Requirements
+# ====================================================================
+# This file merges Phase 1 and Phase 2 dependencies. Install with:
+#   pip install -r requirements.txt
+#
+# For ARM64 (Apple Silicon, AWS Graviton): rdkit must be installed via
+# conda (conda install -c conda-forge rdkit) — pip wheels are x86_64 only.
+# The pipeline degrades gracefully without rdkit.
+
+# ─── Phase 1: Data Ingestion & Pipeline Setup ──────────────────────────────
+requests>=2.31.0
+pandas>=2.1.4
+numpy>=1.26.3
+# v41 ROOT FIX (SEV2): the previous marker
+# ``platform_machine=="x86_64"`` silently skipped rdkit-pypi on ARM64
+# hosts (Apple Silicon M1/M2/M3, AWS Graviton EC2, Azure arm64 VMs).
+# On those hosts the pipeline's ``convert_to_inchikey()`` degraded to
+# returning ``None`` for every SMILES — silently dropping InChIKey
+# conversion for the entire run. The fix adds ``platform_machine==
+# "aarch64"`` (the Linux ARM64 uname; macOS ARM64 also reports
+# "arm64" so we include that too) so RDKit is installed on ARM64
+# hosts as well. Copied from phase1/requirements.txt:21 (audit-2025
+# issue 37). rdkit-pypi publishes aarch64 wheels since the 2023.9
+# release.
+rdkit-pypi>=2023.9.1; python_version>="3.8" and (platform_machine=="x86_64" or platform_machine=="aarch64" or platform_machine=="arm64")
+sqlalchemy>=2.0.25
+psycopg2-binary>=2.9.9
+lxml>=5.1.0
+rapidfuzz>=3.6.1
+python-dotenv>=1.0.0
+# FIX-C6: Airflow is a REAL dependency — phase1/dags/*.py (8 files) do
+# `from airflow.decorators import dag, task` at module top level. Without
+# apache-airflow installed, every DAG crashes at import time and
+# phase1/tests/test_dag_structure.py used to pytest.importorskip("airflow"),
+# silently SKIPPING all DAG structure validation. The Docker base image
+# (apache/airflow:2.8.1) includes it for prod, but dev/CI envs need it too.
+#
+# v41 ROOT FIX (SEV2): the previous line had no ``python_version`` marker.
+# Apache Airflow 2.x does NOT support Python 3.13+ (Airflow 2.10 added
+# 3.12 support; 3.13 support is tracked in apache/airflow#39125 and
+# slated for Airflow 3.0). Installing this requirements.txt on Python
+# 3.13 would pull in Airflow 2.x and then fail at import time with
+# cryptic ``AttributeError`` / ``ImportError`` errors. The fix adds the
+# ``python_version < "3.13"`` marker so pip skips Airflow on Python 3.13+
+# and prints a clear "no matching distribution" message instead. Copied
+# from phase1/requirements.txt:49 (audit-2025 issue 38). When Airflow 3.0
+# ships with 3.13 support, bump the version constraint and remove the
+# marker.
+apache-airflow>=2.8.0; python_version < "3.13"
+
+# v41 ROOT FIX (SEV2): filelock + pyarrow were TRANSITIVE dependencies
+# (via pandas / sqlalchemy) that silently disappeared when pandas 2.2
+# dropped pyarrow from its default install. Declared as direct deps
+# so the build is reproducible. Copied from phase1/requirements.txt:67-68
+# (audit-2025 issue 39). filelock is used by base_pipeline.py for
+# cross-process file locking; pyarrow is used for Parquet read/write
+# and the nullable-pandas Int64 dtype backend used throughout cleaning.
+filelock>=3.13.0
+pyarrow>=14.0.0
+
+# ─── Phase 2: Knowledge Graph Construction ─────────────────────────────────
+neo4j>=5.0
+networkx>=3.0
+torch>=2.0
+torch-geometric>=2.4
+# v41 ROOT FIX (SEV2): torch-scatter + torch-sparse are required by
+# torch-geometric's message-passing layer (used by pyg_builder for
+# HeteroData construction and the Graph Transformer model). Without
+# them, torch-geometric falls back to a slow Python loop for scatter/
+# gather ops and PyG build fails on any graph with >10K edges. Copied
+# from phase2/drugos_graph/requirements.txt:12-13. NOTE: torch-scatter
+# and torch-sparse require matching CUDA / CPU wheels — install via
+# ``pip install torch-scatter torch-sparse -f https://data.pyg.org/whl/...``
+# with the correct torch+CUDA index URL.
+torch-scatter>=2.1,<3.0
+torch-sparse>=0.6,<1.0
+scikit-learn>=1.3
+transformers>=4.30
+mlflow>=2.0
+prometheus-client>=0.20
+pyyaml>=6.0
+certifi>=2024.0
+psutil>=5.9
+# v41 ROOT FIX (SEV2): backports.tarfile is required by the DRKG loader
+# (phase2/drugos_graph/external_loaders/drkg_loader.py) for
+# ``tarfile.extractall(filter="data")`` on Python < 3.12. On Python 3.12+
+# the stdlib's native filter is used; this package is a no-op dependency
+# in that case. Copied from phase2/drugos_graph/requirements.txt:43
+# (BUG 9.5).
+backports.tarfile; python_version < "3.12"
+
+# ─── Bridge (Phase 1 → Phase 2) ─────────────────────────────────────────────
+# The bridge module (phase2/drugos_graph/phase1_bridge.py) has no
+# dependencies beyond pandas (already listed above). It is intentionally
+# lightweight so the bridge works in CI environments without torch/neo4j.

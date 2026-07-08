@@ -1,0 +1,2 @@
+{"timestamp": "2026-07-04T12:36:55.322407+00:00", "operation": "chembl_to_edge_records", "parser_version": "2.0.0", "schema_version": "2.0.0", "edges_out": 0, "skipped": 0, "crosswalk_resolved": 0, "fallback_resolved": 0, "dead_lettered": 6}
+{"timestamp": "2026-07-04T12:38:13.486701+00:00", "operation": "chembl_to_edge_records", "parser_version": "2.0.0", "schema_version": "2.0.0", "edges_out": 0, "skipped": 0, "crosswalk_resolved": 0, "fallback_resolved": 0, "dead_lettered": 6}
