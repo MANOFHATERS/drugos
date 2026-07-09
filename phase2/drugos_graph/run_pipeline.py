@@ -6272,6 +6272,45 @@ def step11b_train_graph_transformer(
         len(train_compounds), len(val_compounds), len(test_compounds),
     )
 
+    # ROOT FIX (PIPE-1 / COMPOUND-2): Create train-only edge_index_dict
+    # for message passing during training. The previous code used the
+    # FULL graph (including val/test edges) for encoding, which leaks
+    # information: when computing node embeddings for val/test triples,
+    # the GNN propagates messages through val/test edges themselves.
+    # This fix filters edge_index_dict to only include edges where BOTH
+    # endpoints are in the training compound set (for Compound-* edges)
+    # or both endpoints are in training nodes (for other edge types).
+    # This ensures no val/test information leaks into training embeddings.
+    train_edge_index_dict: Dict[Tuple[str, str, str], torch.Tensor] = {}
+    train_compounds_tensor = torch.tensor(list(train_compounds), dtype=torch.long)
+    
+    for (src_type, rel, dst_type), ei in edge_index_dict.items():
+        if ei.numel() == 0:
+            continue
+        if src_type == "Compound" and dst_type == "Disease" and rel == "treats":
+            # For the target relation, only include train edges
+            edge_mask = torch.isin(ei[0], train_compounds_tensor) & \
+                        torch.isin(ei[1], torch.tensor([tails[i].item() for i in train_idx], dtype=torch.long))
+            train_edge_index_dict[(src_type, rel, dst_type)] = ei[:, edge_mask]
+        elif src_type == "Compound":
+            # For edges starting from Compound, only include if source is in train
+            edge_mask = torch.isin(ei[0], train_compounds_tensor)
+            train_edge_index_dict[(src_type, rel, dst_type)] = ei[:, edge_mask]
+        elif dst_type == "Compound":
+            # For edges ending at Compound, only include if dest is in train
+            edge_mask = torch.isin(ei[1], train_compounds_tensor)
+            train_edge_index_dict[(src_type, rel, dst_type)] = ei[:, edge_mask]
+        else:
+            # For non-Compound edges, include all (they're auxiliary structure)
+            train_edge_index_dict[(src_type, rel, dst_type)] = ei
+    
+    logger.info(
+        "Step 11b: Created train-only edge_index_dict (PIPE-1 root fix). "
+        "Original edges: %d, Train edges: %d",
+        sum(ei.shape[1] for ei in edge_index_dict.values()),
+        sum(ei.shape[1] for ei in train_edge_index_dict.values()),
+    )
+
     # Train the model end-to-end (both HGT encoder and bilinear decoder
     # receive gradients). v35 ROOT FIX (N-2): the previous comment
     # "the HGT encoder is pre-computed; we train the per-relation
