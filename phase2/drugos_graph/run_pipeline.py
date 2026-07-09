@@ -5933,7 +5933,7 @@ def step11b_train_graph_transformer(
     """
     _configure_logging()
     logger.info("=" * 60)
-    logger.info("STEP 11b: Graph Transformer (HGT) Training — v29 ROOT FIX")
+    logger.info("STEP 11b: Graph Transformer (HGT) Training — v44 ROOT FIX")
     logger.info("=" * 60)
 
     if skip_training:
@@ -6076,6 +6076,25 @@ def step11b_train_graph_transformer(
         for k, v in config_overrides.items():
             if hasattr(cfg, k):
                 setattr(cfg, k, v)
+    
+    # ROOT FIX (PIPE-3 / COMPOUND-5): Apply seeding for reproducibility.
+    # The previous code had NO seeding for torch/cuda/numpy RNGs, making
+    # training non-reproducible. This fix applies seeds from config (or
+    # default 42) to all relevant RNGs before model construction and
+    # training.
+    _seed = getattr(cfg, 'seed', 42)
+    torch.manual_seed(_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(_seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    try:
+        import numpy as np
+        np.random.seed(_seed)
+    except ImportError:
+        pass
+    logger.info("Step 11b: RNG seeded with seed=%d (PIPE-3 root fix)", _seed)
+
     logger.info(
         "Step 11b: building HGT model with %d node types, %d relation "
         "types, embedding_dim=%d, num_heads=%d, num_layers=%d",
