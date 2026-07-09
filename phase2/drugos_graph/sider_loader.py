@@ -1145,6 +1145,33 @@ def _safe_str(v: Any) -> Optional[str]:
     return s
 
 
+def _safe_int_idx(idx: Any, default: int = 0) -> int:
+    """Safely convert a DataFrame index to int, handling numpy types and NaN.
+    
+    This handles:
+    - None → returns default
+    - numpy.integer types (int64, int32, etc.) → converts properly
+    - float NaN → returns default
+    - Regular Python int → returns as-is
+    - Any other type → tries int() conversion, falls back to default on failure
+    
+    Used for DLQ row_index tracking to prevent silent failures when pandas
+    returns numpy scalars instead of Python ints.
+    """
+    if idx is None:
+        return default
+    # Handle NaN floats before attempting int() conversion
+    if isinstance(idx, float):
+        if idx != idx:  # NaN check (NaN != NaN)
+            return default
+        return int(idx)
+    # numpy.integer and regular int will work with int()
+    try:
+        return int(idx)
+    except (ValueError, TypeError):
+        return default
+
+
 def _sanitize_for_cypher(s: str) -> str:
     """Sanitize a string for safe inclusion in a Cypher query (D9.7 / G8).
 
