@@ -412,6 +412,11 @@ from typing import (
 
 import pandas as pd
 
+# v41 ROOT FIX (SEV3): import numpy for np.integer isinstance check in
+# DLQ writers — DataFrame iterrows() yields numpy.int64 index values that
+# don't satisfy isinstance(idx, int) directly and crash json.dumps().
+import numpy as np
+
 # ─── Project imports ─────────────────────────────────────────────────────────
 from .config import (
     ALLOWED_SIDER_URLS,
