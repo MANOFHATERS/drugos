@@ -396,6 +396,10 @@ class GraphTransformerModel(nn.Module):
             the count is recorded but no embedding table is allocated.
         """
         d = self.config.embedding_dim
+        # ROOT FIX (HGT-1): always use the current device from parameters
+        # instead of stale self._device. nn.Module.to() updates parameters
+        # but not custom attributes, so self._device becomes stale on GPU.
+        current_device = next(self.parameters()).device
         for nt, n in node_counts.items():
             self._node_counts[nt] = int(n)
             if nt in self.node_embedding_tables:
@@ -408,7 +412,7 @@ class GraphTransformerModel(nn.Module):
                 if old.weight.shape[0] > 0 and old.weight.shape[0] <= int(n):
                     with torch.no_grad():
                         new_table.weight[: old.weight.shape[0]] = old.weight
-                self.node_embedding_tables[nt] = new_table.to(self._device)
+                self.node_embedding_tables[nt] = new_table.to(current_device)
 
     # -- KGEmbeddingModel Protocol properties ----------------------------
     @property
@@ -525,7 +529,10 @@ class GraphTransformerModel(nn.Module):
         # feature-backed node types.
         n = self._node_counts.get(node_type, 0)
         d = self.config.embedding_dim
-        device = self._device
+        # ROOT FIX (HGT-1): use current device from parameters instead of
+        # stale self._device. nn.Module.to() updates parameters but not
+        # custom attributes, so self._device becomes stale on GPU.
+        device = next(self.parameters()).device
         if indices is None:
             return torch.zeros(n, d, device=device)
         return torch.zeros(indices.shape[0], d, device=device)
