@@ -488,13 +488,13 @@ def main(argv: Optional[list] = None) -> int:
     from drugos_graph.phase1_bridge import run_phase1_to_phase2
 
     log.info("Running Phase 1 → Phase 2 bridge...")
-    result = run_phase1_to_phase2(
+    bridge_result = run_phase1_to_phase2(
         phase1_processed_dir=args.phase1_dir,
         builder=builder,
         batch_size=args.batch_size,
     )
 
-    summary: Dict[str, Any] = result["summary"]
+    summary: Dict[str, Any] = bridge_result["summary"]
 
     # v34 ROOT FIX (NEO4J PERSISTENCE): the previous code used
     # RecordingGraphBuilder (in-memory) by default and NEVER persisted
