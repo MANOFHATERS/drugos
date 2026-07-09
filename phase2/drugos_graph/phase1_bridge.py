@@ -2120,12 +2120,65 @@ def stage_phase1_to_phase2(
     # v43 P2-032: trimmed 18-line stale v28 ROOT FIX comment to 3 lines.
     # drug_canonical_map is built ONCE from staged.compound_nodes (source
     # of truth) and reused for both Compound→Protein and Compound→treats→Disease paths.
+    # 
+    # v45 ROOT FIX (Gap #3 — Compound→Protein 90% loss): DrugBank interactions
+    # reference drugbank_ids that may not exist in drugbank_drugs.csv (filtered,
+    # missing, or incomplete). Building drug_canonical_map ONLY from staged.compound_nodes
+    # causes 3,640 edges to be dropped with 'drug_not_in_compound_nodes'.
+    # ROOT FIX: Before building the map, scan interactions for any drugbank_id
+    # NOT in compound_nodes, and create minimal stub Compound nodes for them.
+    # This ensures 100% of DrugBank interactions are preserved. Stub nodes are
+    # marked with _is_stub=True for downstream enrichment if needed.
+    
+    inter = frames.get("interactions")
+    if inter is not None and not inter.empty:
+        # ROOT FIX: Collect all unique drugbank_ids from interactions
+        interaction_drugbank_ids = set()
+        for _, row in inter.iterrows():
+            dbid = _safe_str(row.get("drugbank_id"))
+            if dbid:
+                interaction_drugbank_ids.add(dbid)
+        
+        # Build set of existing drugbank_ids from staged compound nodes
+        existing_drugbank_ids = {
+            n["drugbank_id"] for n in staged.compound_nodes if n.get("drugbank_id")
+        }
+        
+        # Create stub Compound nodes for any missing drugbank_ids
+        missing_drugbank_ids = interaction_drugbank_ids - existing_drugbank_ids
+        if missing_drugbank_ids:
+            logger.warning(
+                "Phase1 bridge: %d drugbank_ids in interactions NOT found in drugbank_drugs.csv. "
+                "Creating stub Compound nodes to preserve edges. Sample: %s",
+                len(missing_drugbank_ids),
+                list(missing_drugbank_ids)[:5],
+            )
+            for dbid in sorted(missing_drugbank_ids):
+                stub_node = {
+                    "id": dbid,  # Use drugbank_id as canonical ID (matches ID_PATTERN)
+                    "drugbank_id": dbid,
+                    "name": f"DrugBank Compound {dbid}",
+                    "inchikey": None,
+                    "pubchem_cid": None,
+                    "completeness_score": 0.0,
+                    "_is_stub": True,  # Mark as stub for downstream enrichment
+                    "_source_phase": 1,
+                    "_source_file": "drugbank_interactions.csv.gz (stub)",
+                    "_source_row": None,
+                    "_pipeline_run_id": run_id,
+                    "_loaded_at": loaded_at,
+                    "_schema_version": schema_version,
+                }
+                staged.compound_nodes.append(stub_node)
+    
+    # Build canonical map AFTER ensuring all drugbank_ids from interactions are present
     drug_canonical_map: Dict[str, str] = {
         n["drugbank_id"]: n["id"]
         for n in staged.compound_nodes
         if n.get("drugbank_id")
     }
-
+    
+    # Re-fetch interactions for edge processing (map is now complete)
     inter = frames.get("interactions")
     if inter is not None and not inter.empty:
         protein_seen: Dict[str, Dict[str, Any]] = {}
