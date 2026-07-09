@@ -2241,6 +2241,22 @@ def _build_sql_query(
     if cfg.limit is not None:
         limit_clause = "LIMIT ?"
 
+    # Issue 2.2 (C2 ROOT FIX): Cross-product penalty requires knowing the
+    # true N_interventions and N_conditions per trial. The current JOIN
+    # produces N_intv × N_cond rows per trial, but without counts we cannot
+    # distinguish a clean 1×1 trial from a 3×3 trial (which fabricates 6
+    # untested drug-disease pairs). We add correlated subqueries to count
+    # DISTINCT interventions and conditions per nct_id.
+    n_interventions_select: str = (
+        "(SELECT COUNT(DISTINCT intv_count.id) FROM interventions intv_count "
+        "WHERE intv_count.nct_id = s.nct_id "
+        f"AND intv_count.intervention_type IN ({intv_type_placeholders})) AS n_interventions"
+    )
+    n_conditions_select: str = (
+        "(SELECT COUNT(DISTINCT cond_count.id) FROM conditions cond_count "
+        "WHERE cond_count.nct_id = s.nct_id) AS n_conditions"
+    )
+
     query: str = f"""
     SELECT
         s.nct_id              AS nct_id,
@@ -2263,7 +2279,9 @@ def _build_sql_query(
         d.intervention_model  AS intervention_model,
         d.masking             AS masking,
         d.primary_purpose     AS primary_purpose,
-        {primary_outcomes_select}
+        {primary_outcomes_select},
+        {n_interventions_select},
+        {n_conditions_select}
     FROM studies s
     JOIN interventions intv ON intv.nct_id = s.nct_id
     JOIN conditions cond ON cond.nct_id = s.nct_id
@@ -2281,13 +2299,17 @@ def _build_sql_query(
     """
 
     # Build params in order matching the SQL.
+    # Note: n_interventions_select and n_conditions_select each use
+    # intv_type_placeholders, so we must add them twice more.
     params: List[Any] = []
-    params.extend(cfg.intervention_types)
+    params.extend(cfg.intervention_types)  # for main WHERE clause
     params.extend(cfg.phases)
     params.extend(cfg.study_types)
     params.extend(cfg.allowed_statuses)
     if cfg.min_enrollment > 0:
         params.append(cfg.min_enrollment)
+    # Add intervention_types again for n_interventions subquery
+    params.extend(cfg.intervention_types)
     if cfg.limit is not None:
         params.append(cfg.limit)
 
@@ -3209,11 +3231,27 @@ def _build_edge_record_from_dict(
     else:
         has_results = bool(has_results_raw)
 
-    # Issue 2.2 — cross-product inflation. We don't have direct access to
-    # n_interventions / n_conditions here; we approximate via the GROUP BY.
-    # For now, set to 1×1 (the loader has already exploded MeSH terms).
-    n_interventions: int = 1
-    n_conditions: int = 1
+    # Issue 2.2 (C2 ROOT FIX): Use actual n_interventions and n_conditions
+    # from the SQL query (added via correlated subqueries). These counts
+    # enable the cross-product penalty to properly penalize trials with
+    # multiple interventions × multiple conditions (e.g., a 3×3 trial
+    # fabricates 6 untested drug-disease pairs).
+    n_interventions_raw: Any = record.get("n_interventions", 1)
+    n_conditions_raw: Any = record.get("n_conditions", 1)
+    n_interventions: int = (
+        int(n_interventions_raw)
+        if n_interventions_raw is not None and not (
+            isinstance(n_interventions_raw, float) and pd.isna(n_interventions_raw)
+        )
+        else 1
+    )
+    n_conditions: int = (
+        int(n_conditions_raw)
+        if n_conditions_raw is not None and not (
+            isinstance(n_conditions_raw, float) and pd.isna(n_conditions_raw)
+        )
+        else 1
+    )
 
     # Issue 2.5 — compute evidence_strength.
     evidence_strength, confidence, id_confidence = _compute_evidence_strength(
