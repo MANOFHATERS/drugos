@@ -2463,7 +2463,50 @@ def stage_phase1_to_phase2(
     # v43 P2-032: trimmed — drug_canonical_map built once above, reused here.
 
     # Set of Disease IDs already staged (referential integrity gate).
-    disease_id_set = {d["id"] for d in staged.disease_nodes}
+    # GAP #2 ROOT FIX (Compound-treats-Disease 97% loss): The previous
+    # code built disease_id_set ONLY from OMIM-derived disease_nodes
+    # (line 2466: {d["id"] for d in staged.disease_nodes} at that point
+    # contained only OMIM diseases). DisGeNET GDA processing (lines
+    # 3444-3503) adds Disease nodes to extra_disease_seen but those are
+    # NOT in staged.disease_nodes yet when this set is built. Result:
+    # drugbank_indications.csv rows with DisGeNET disease IDs (EFO:,
+    # DOID:, MONDO:, etc.) were rejected at line 2526 because they
+    # weren't in disease_id_set, causing 3,720 of 3,838 indications to
+    # be lost (only 118 OMIM-format IDs survived).
+    #
+    # Fix: Build disease_id_set from ALL Disease nodes that will exist
+    # after staging completes — OMIM + DisGeNET + any other source that
+    # stages Disease nodes. We compute this AFTER all Gene/Disease
+    # staging blocks (OMIM GDA, OMIM susceptibility, DisGeNET GDA) have
+    # run, by unioning staged.disease_nodes with extra_disease_seen.
+    # However, since extra_disease_seen isn't populated until later
+    # (line 2827), we need to build the set dynamically here to include
+    # diseases from ALL sources that have been staged so far.
+    #
+    # The correct fix: defer disease_id_set computation until AFTER all
+    # disease staging is complete, OR build it from the frames directly
+    # to include DisGeNET diseases. We choose the latter: extract all
+    # unique disease_ids from omim_gda AND disgenet_gda frames, since
+    # both contribute Disease nodes to the graph.
+    _all_disease_ids: set[str] = set()
+    omim_gda = frames.get("omim_gda")
+    if omim_gda is not None and not omim_gda.empty:
+        for _did in omim_gda["disease_id"].dropna().unique():
+            _did_str = _safe_str(_did)
+            if _did_str:
+                _all_disease_ids.add(_did_str)
+    disgenet_gda = frames.get("disgenet_gda")
+    if disgenet_gda is not None and not disgenet_gda.empty:
+        for _did in disgenet_gda["disease_id"].dropna().unique():
+            _did_str = _safe_str(_did)
+            if _did_str:
+                _all_disease_ids.add(_did_str)
+    # Also include any Disease nodes already staged (from OMIM block above).
+    for _dnode in staged.disease_nodes:
+        _dnid = _dnode.get("id")
+        if _dnid:
+            _all_disease_ids.add(_dnid)
+    disease_id_set = _all_disease_ids
 
     # ── Path A: structured drugbank_indications.csv (preferred) ──
     # v34 ROOT FIX (CRITICAL #8): the previous code required non-empty
